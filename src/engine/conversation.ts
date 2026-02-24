@@ -305,24 +305,36 @@ Responda APENAS com o texto da mensagem para o lead.
 Sem introduções, sem meta-comentários, sem aspas.
 Máximo de 3-4 frases. Seja natural e humano.`;
 
-  try {
-    const response = await anthropic.messages.create({
-      model: config.anthropic.model,
-      max_tokens: config.anthropic.maxTokens,
-      system: systemPrompt,
-      messages,
-    });
+  // Retry com backoff exponencial (3 tentativas)
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await anthropic.messages.create({
+        model: config.anthropic.model,
+        max_tokens: config.anthropic.maxTokens,
+        system: systemPrompt,
+        messages,
+      });
 
-    const content = response.content[0];
-    if (content.type !== 'text') {
-      throw new Error('Resposta inesperada da API');
+      const content = response.content[0];
+      if (content.type !== 'text') {
+        throw new Error('Resposta inesperada da API');
+      }
+
+      return content.text.trim();
+    } catch (error) {
+      logger.warn(`Tentativa ${attempt}/${MAX_RETRIES} falhou ao gerar resposta com Claude`, error);
+      if (attempt === MAX_RETRIES) {
+        logger.error('Todas as tentativas esgotadas. Retornando fallback.');
+        // Fallback para não deixar o usuário sem resposta
+        return 'Oi! Recebi sua mensagem. Me dá um instante que já te respondo 😊';
+      }
+      // Aguarda antes de tentar novamente: 2s, 4s
+      await new Promise(res => setTimeout(res, attempt * 2000));
     }
-
-    return content.text.trim();
-  } catch (error) {
-    logger.error('Erro ao gerar resposta com Claude', error);
-    throw error;
   }
+  // Typescript precisa de return aqui mas nunca chega
+  return 'Oi! Me dá um instante 😊';
 }
 
 // ============================================================

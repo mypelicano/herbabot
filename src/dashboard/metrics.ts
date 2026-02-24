@@ -122,7 +122,7 @@ async function getTopClients(
       product_kit,
       start_date,
       leads!inner(phone, full_name, consultant_id),
-      client_gamification(current_streak, xp_total, last_checkin_date)
+      client_gamification(current_streak, xp_total, last_checkin_at)
     `)
     .eq('status', 'active')
     .eq('leads.consultant_id', consultantId);
@@ -134,7 +134,7 @@ async function getTopClients(
     product_kit: string;
     start_date: string;
     leads: { phone: string | null; full_name: string | null; consultant_id: string };
-    client_gamification: Array<{ current_streak: number; xp_total: number; last_checkin_date: string | null }>;
+    client_gamification: Array<{ current_streak: number; xp_total: number; last_checkin_at: string | null }>;
   };
 
   return ((projects as unknown) as ProjRow[])
@@ -152,7 +152,7 @@ async function getTopClients(
         currentStreak: gam?.current_streak ?? 0,
         xpTotal: gam?.xp_total ?? 0,
         level: xpToLevel(gam?.xp_total ?? 0),
-        lastCheckin: gam?.last_checkin_date ?? undefined,
+        lastCheckin: gam?.last_checkin_at ?? undefined,
       } satisfies ClientOverview;
     })
     .sort((a, b) => b.xpTotal - a.xpTotal)
