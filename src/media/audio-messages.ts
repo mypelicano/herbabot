@@ -13,6 +13,7 @@
  */
 
 import { createLogger } from '../lib/logger.js';
+import { config } from '../config/index.js';
 import { generateAudio } from './elevenlabs-client.js';
 import { sendAudio } from '../channels/whatsapp-client.js';
 import { enqueueSend } from '../safety/rate-limiter.js';
@@ -177,7 +178,7 @@ export async function triggerAudioIfHighScore(params: {
 }): Promise<void> {
   // Score >= 75: lead muito quente — áudio de impacto
   if (params.handoffScore >= 75) {
-    // Delay de 2 min após a mensagem de texto para parecer natural
+    // Delay configurável via AUDIO_TRIGGER_DELAY_MS (padrão 2 min)
     setTimeout(() => {
       sendPersonalizedAudio({
         phone: params.phone,
@@ -186,6 +187,6 @@ export async function triggerAudioIfHighScore(params: {
         pain: params.pain,
         voiceId: params.voiceId,
       }).catch(() => {});
-    }, 2 * 60 * 1000);
+    }, config.audio.triggerDelayMs);
   }
 }

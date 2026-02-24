@@ -132,12 +132,15 @@ export async function handleCheckinResponse(
     }
 
     case 'waiting_weight': {
-      const weightMatch = message.match(/(\d{2,3}([.,]\d{1,2})?)/);
       const isPular = text.includes('pular') || text.includes('skip') || text === 'n' || text === 'não';
+      // Regex ancorada: aceita "68", "68.5", "68,5", "68kg" mas NÃO "dia 30" ou frases
+      const weightMatch = !isPular && message.trim().match(/^(\d{2,3}([.,]\d{1,2})?)(\s*kg)?$/i);
 
-      if (weightMatch && !isPular) {
+      if (weightMatch) {
         const weight = parseFloat(weightMatch[1].replace(',', '.'));
-        session.data.weightKg = weight;
+        if (weight >= 30 && weight <= 300) { // sanidade fisiológica
+          session.data.weightKg = weight;
+        }
       }
 
       session.step = 'done';

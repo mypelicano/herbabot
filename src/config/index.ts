@@ -10,7 +10,8 @@ const envSchema = z.object({
   ELEVENLABS_VOICE_ID: z.string().optional(),
   INSTAGRAM_VERIFY_TOKEN: z.string().default('pelicano_verify_token'),
   DASHBOARD_API_KEY: z.string().optional(),
-  REDIS_URL: z.string().default('redis://localhost:6379'),
+  AUDIO_TRIGGER_DELAY_MS: z.coerce.number().default(120000),
+  TIMEZONE_OFFSET: z.coerce.number().default(-3),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   MAX_MESSAGES_PER_HOUR: z.coerce.number().default(30),
@@ -52,13 +53,14 @@ export const config = {
   dashboard: {
     apiKey: env.DASHBOARD_API_KEY,
   },
-  redis: {
-    url: env.REDIS_URL,
+  audio: {
+    triggerDelayMs: env.AUDIO_TRIGGER_DELAY_MS,
   },
   safety: {
     maxMessagesPerHour: env.MAX_MESSAGES_PER_HOUR,
     minDelayMs: env.MIN_DELAY_MS,
     maxDelayMs: env.MAX_DELAY_MS,
+    timezoneOffset: env.TIMEZONE_OFFSET,
   },
   app: {
     isDev: env.NODE_ENV === 'development',

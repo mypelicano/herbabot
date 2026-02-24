@@ -14,7 +14,14 @@
 
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
+import { z } from 'zod';
 import { createLogger } from '../lib/logger.js';
+
+const ApproachProspectSchema = z.object({
+  prospectId: z.string().min(1),
+  prospectPhone: z.string().min(10),
+  prospectName: z.string().optional(),
+});
 import { config } from '../config/index.js';
 import {
   getDashboardSummary,
@@ -94,16 +101,13 @@ router.get('/:consultantId/prospects', async (req: Request, res: Response) => {
 router.post('/:consultantId/approach-prospect', async (req: Request, res: Response) => {
   try {
     const consultantId = p(req, 'consultantId');
-    const { prospectId, prospectPhone, prospectName } = req.body as {
-      prospectId: string;
-      prospectPhone: string;
-      prospectName?: string;
-    };
 
-    if (!prospectId || !prospectPhone) {
-      res.status(400).json({ error: 'prospectId e prospectPhone são obrigatórios' });
+    const parsed = ApproachProspectSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Dados inválidos', details: parsed.error.flatten().fieldErrors });
       return;
     }
+    const { prospectId, prospectPhone, prospectName } = parsed.data;
 
     const success = await approachProspect({
       consultantId,

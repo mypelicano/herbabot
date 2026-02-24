@@ -309,12 +309,14 @@ Máximo de 3-4 frases. Seja natural e humano.`;
   const MAX_RETRIES = 3;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
+      const t0 = Date.now();
       const response = await anthropic.messages.create({
         model: config.anthropic.model,
         max_tokens: config.anthropic.maxTokens,
         system: systemPrompt,
         messages,
       });
+      logger.debug(`Claude respondeu em ${Date.now() - t0}ms (tentativa ${attempt})`);
 
       const content = response.content[0];
       if (content.type !== 'text') {

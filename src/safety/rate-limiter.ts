@@ -98,7 +98,7 @@ async function processQueue(): Promise<void> {
 // ============================================================
 // DETECTOR DE HORÁRIO PERMITIDO (8h–21h no fuso do consultor)
 // ============================================================
-export function isWithinAllowedHours(timezoneOffset: number = -3): boolean {
+export function isWithinAllowedHours(timezoneOffset: number = config.safety.timezoneOffset): boolean {
   const utcHour = new Date().getUTCHours();
   const localHour = (utcHour + timezoneOffset + 24) % 24;
   return localHour >= 8 && localHour <= 21;
