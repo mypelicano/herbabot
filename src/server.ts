@@ -21,6 +21,7 @@ import {
   type ManyChatWebhookPayload,
 } from './monitor/instagram-webhook.js';
 import { dashboardRouter } from './dashboard/api-routes.js';
+import { clientRouter } from './dashboard/client-routes.js';
 import { config } from './config/index.js';
 
 const logger = createLogger('SERVER');
@@ -44,6 +45,11 @@ app.use(express.json({ limit: '5mb' }));
 // DASHBOARD API
 // ============================================================
 app.use('/api/dashboard', dashboardRouter);
+
+// ============================================================
+// CLIENT API (área do cliente web)
+// ============================================================
+app.use('/api/client', clientRouter);
 
 // ============================================================
 // HEALTH CHECK
