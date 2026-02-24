@@ -377,6 +377,12 @@ async function checkAndAwardBadges(
 
   if (!g) return [];
 
+  // Buscar contagem real de check-ins
+  const { count: checkinCount } = await db.client
+    .from('daily_checkins')
+    .select('id', { count: 'exact', head: true })
+    .eq('project_id', projectId);
+
   const earnedBadgeIds = new Set(g.badges);
   const weightLost = (p?.start_weight_kg && p?.current_weight_kg)
     ? p.start_weight_kg - p.current_weight_kg
@@ -386,9 +392,9 @@ async function checkAndAwardBadges(
     streak: currentStreak,
     xpTotal: g.xp_total,
     level: currentLevel,
-    checkinCount: 0, // simplificado
+    checkinCount: checkinCount ?? 0,
     weightLost,
-    referrals: 0,    // simplificado — expandir depois
+    referrals: 0,    // expandir: buscar de tabela referrals quando existir
     challengesCompleted: 0,
   };
 

@@ -99,12 +99,32 @@ async function getFunnelMetrics(consultantId: string): Promise<FunnelMetrics> {
   const converted = convertedClients ?? 0;
   const conversionRate = total > 0 ? Math.round((converted / total) * 100) : 0;
 
+  // Calcular média de dias para conversão a partir de dados reais
+  const { data: convertedConvs } = await db.client
+    .from('conversations')
+    .select('started_at, converted_at')
+    .eq('consultant_id', consultantId)
+    .eq('status', 'converted')
+    .not('converted_at', 'is', null)
+    .limit(100);
+
+  let avgDaysToConvert = 0;
+  if (convertedConvs?.length) {
+    const totalDays = (convertedConvs as Array<{ started_at: string; converted_at: string }>)
+      .reduce((sum, c) => {
+        const days = (new Date(c.converted_at).getTime() - new Date(c.started_at).getTime())
+          / (24 * 60 * 60 * 1000);
+        return sum + days;
+      }, 0);
+    avgDaysToConvert = Math.round(totalDays / convertedConvs.length);
+  }
+
   return {
     totalLeads: total,
     activeConversations: activeConversations ?? 0,
     convertedClients: converted,
     conversionRate,
-    avgDaysToConvert: 4, // Placeholder — calcular de dados reais em produção
+    avgDaysToConvert,
   };
 }
 
@@ -182,7 +202,7 @@ export async function getDashboardSummary(
     getTopClients(consultantId),
   ]);
 
-  const prospectStats = getQueueStats(consultantId);
+  const prospectStats = await getQueueStats(consultantId);
 
   return {
     consultantId,

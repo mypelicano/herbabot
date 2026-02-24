@@ -28,35 +28,90 @@ export type ProspectEntry = {
   createdAt: Date;
 };
 
-// Armazenamento em memória (em produção: persistir no Supabase)
-const prospectQueues = new Map<string, ProspectEntry[]>(); // key: consultantId
+// Cache em memória para leitura rápida (sincronizado com Supabase)
+const prospectQueues = new Map<string, ProspectEntry[]>();
 
 // ============================================================
-// ADICIONAR PROSPECT À FILA
+// TIPOS DO BANCO
 // ============================================================
-export function enqueueProspect(params: {
+type QueueRow = {
+  id: string;
+  consultant_id: string;
+  profile_id: string;
+  platform: string;
+  profile_name: string | null;
+  post_url: string | null;
+  message_text: string;
+  product_score: number;
+  business_score: number;
+  urgency_score: number;
+  matched_keywords: string[];
+  priority: 'hot' | 'warm' | 'cold';
+  status: ProspectEntry['status'];
+  approached_at: string | null;
+  contacted_phone: string | null;
+  notes: string | null;
+  created_at: string;
+};
+
+function rowToEntry(row: QueueRow): ProspectEntry {
+  return {
+    id: row.id,
+    consultantId: row.consultant_id,
+    signal: {
+      profileId: row.profile_id,
+      platform: row.platform as SocialSignal['platform'],
+      profileName: row.profile_name ?? undefined,
+      postUrl: row.post_url ?? undefined,
+      messageText: row.message_text,
+      intentScore: {
+        productScore: row.product_score,
+        businessScore: row.business_score,
+        urgencyScore: row.urgency_score,
+        total: Math.round((row.product_score + row.business_score + row.urgency_score) / 3),
+      },
+      matchedKeywords: row.matched_keywords,
+      priority: row.priority,
+      detectedAt: new Date(row.created_at),
+    },
+    status: row.status,
+    approachedAt: row.approached_at ? new Date(row.approached_at) : undefined,
+    contactedPhone: row.contacted_phone ?? undefined,
+    notes: row.notes ?? undefined,
+    createdAt: new Date(row.created_at),
+  };
+}
+
+// ============================================================
+// ADICIONAR PROSPECT À FILA (com persistência no Supabase)
+// ============================================================
+export async function enqueueProspect(params: {
   consultantId: string;
   signal: SocialSignal;
-}): ProspectEntry {
+}): Promise<ProspectEntry> {
   const { consultantId, signal } = params;
 
-  if (!prospectQueues.has(consultantId)) {
-    prospectQueues.set(consultantId, []);
-  }
+  // Verificar duplicata no banco (últimas 24h)
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: existing } = await db.client
+    .from('prospect_queue')
+    .select('id')
+    .eq('consultant_id', consultantId)
+    .eq('profile_id', signal.profileId)
+    .eq('platform', signal.platform)
+    .gte('created_at', since)
+    .limit(1);
 
-  const queue = prospectQueues.get(consultantId)!;
-
-  // Evitar duplicatas (mesmo profileId da mesma plataforma nas últimas 24h)
-  const alreadyQueued = queue.some(
-    p =>
-      p.signal.profileId === signal.profileId &&
-      p.signal.platform === signal.platform &&
-      Date.now() - p.createdAt.getTime() < 24 * 60 * 60 * 1000
-  );
-
-  if (alreadyQueued) {
+  if (existing?.length) {
     logger.debug(`Prospect ${signal.profileId} já está na fila — ignorando duplicata`);
-    return queue.find(p => p.signal.profileId === signal.profileId)!;
+    const cached = prospectQueues.get(consultantId);
+    return cached?.find(p => p.signal.profileId === signal.profileId) ?? {
+      id: (existing[0] as { id: string }).id,
+      consultantId,
+      signal,
+      status: 'queued',
+      createdAt: new Date(),
+    };
   }
 
   const entry: ProspectEntry = {
@@ -67,17 +122,32 @@ export function enqueueProspect(params: {
     createdAt: new Date(),
   };
 
-  // Inserir em ordem de prioridade (hot primeiro)
+  // Persistir no Supabase
+  await db.client.from('prospect_queue').insert({
+    id: entry.id,
+    consultant_id: consultantId,
+    profile_id: signal.profileId,
+    platform: signal.platform,
+    profile_name: signal.profileName ?? null,
+    post_url: signal.postUrl ?? null,
+    message_text: signal.messageText,
+    product_score: signal.intentScore.productScore,
+    business_score: signal.intentScore.businessScore,
+    urgency_score: signal.intentScore.urgencyScore,
+    matched_keywords: signal.matchedKeywords,
+    priority: signal.priority,
+    status: 'queued',
+  });
+
+  // Atualizar cache por prioridade
+  if (!prospectQueues.has(consultantId)) prospectQueues.set(consultantId, []);
+  const queue = prospectQueues.get(consultantId)!;
   const priorityOrder = { hot: 0, warm: 1, cold: 2 };
   const insertIdx = queue.findIndex(
     p => priorityOrder[p.signal.priority] > priorityOrder[signal.priority]
   );
-
-  if (insertIdx === -1) {
-    queue.push(entry);
-  } else {
-    queue.splice(insertIdx, 0, entry);
-  }
+  if (insertIdx === -1) queue.push(entry);
+  else queue.splice(insertIdx, 0, entry);
 
   logger.info(
     `Prospect enfileirado [${signal.priority.toUpperCase()}]: @${signal.profileId} (${signal.platform}) — consultor ${consultantId.substring(0, 8)}...`
@@ -87,49 +157,79 @@ export function enqueueProspect(params: {
 }
 
 // ============================================================
-// OBTER PRÓXIMOS DA FILA
+// OBTER PRÓXIMOS DA FILA (com fallback ao Supabase após restart)
 // ============================================================
-export function getNextProspects(consultantId: string, limit = 5): ProspectEntry[] {
-  const queue = prospectQueues.get(consultantId) ?? [];
-  return queue
-    .filter(p => p.status === 'queued')
-    .slice(0, limit);
+export async function getNextProspects(consultantId: string, limit = 5): Promise<ProspectEntry[]> {
+  const cached = prospectQueues.get(consultantId);
+  if (cached?.length) {
+    return cached.filter(p => p.status === 'queued').slice(0, limit);
+  }
+
+  // Fallback: buscar do Supabase (recupera estado após restart)
+  const { data } = await db.client
+    .from('prospect_queue')
+    .select('*')
+    .eq('consultant_id', consultantId)
+    .eq('status', 'queued')
+    .order('priority', { ascending: true })
+    .order('created_at', { ascending: true })
+    .limit(limit);
+
+  if (!data?.length) return [];
+  const entries = (data as QueueRow[]).map(rowToEntry);
+  prospectQueues.set(consultantId, entries);
+  return entries;
 }
 
 // ============================================================
-// ATUALIZAR STATUS DO PROSPECT
+// ATUALIZAR STATUS DO PROSPECT (memória + Supabase)
 // ============================================================
-export function updateProspectStatus(
+export async function updateProspectStatus(
   consultantId: string,
   prospectId: string,
   status: ProspectEntry['status'],
   extras?: { contactedPhone?: string; notes?: string }
-): void {
-  const queue = prospectQueues.get(consultantId);
-  if (!queue) return;
+): Promise<void> {
+  // Atualizar cache
+  const entry = prospectQueues.get(consultantId)?.find(p => p.id === prospectId);
+  if (entry) {
+    entry.status = status;
+    if (extras?.contactedPhone) entry.contactedPhone = extras.contactedPhone;
+    if (extras?.notes) entry.notes = extras.notes;
+    if (status === 'approaching') entry.approachedAt = new Date();
+  }
 
-  const entry = queue.find(p => p.id === prospectId);
-  if (!entry) return;
-
-  entry.status = status;
-  if (extras?.contactedPhone) entry.contactedPhone = extras.contactedPhone;
-  if (extras?.notes) entry.notes = extras.notes;
-  if (status === 'approaching') entry.approachedAt = new Date();
+  // Persistir no Supabase
+  await db.client
+    .from('prospect_queue')
+    .update({
+      status,
+      contacted_phone: extras?.contactedPhone ?? null,
+      notes: extras?.notes ?? null,
+      approached_at: status === 'approaching' ? new Date().toISOString() : null,
+    })
+    .eq('id', prospectId);
 }
 
 // ============================================================
-// ESTATÍSTICAS DA FILA
+// ESTATÍSTICAS DA FILA (do Supabase para dados precisos)
 // ============================================================
-export function getQueueStats(consultantId: string) {
-  const queue = prospectQueues.get(consultantId) ?? [];
+export async function getQueueStats(consultantId: string) {
+  const { data } = await db.client
+    .from('prospect_queue')
+    .select('status, priority')
+    .eq('consultant_id', consultantId)
+    .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+
+  const rows = (data ?? []) as Array<{ status: string; priority: string }>;
   return {
-    total: queue.length,
-    queued: queue.filter(p => p.status === 'queued').length,
-    approaching: queue.filter(p => p.status === 'approaching').length,
-    contacted: queue.filter(p => p.status === 'contacted').length,
-    converted: queue.filter(p => p.status === 'converted').length,
-    hot: queue.filter(p => p.signal.priority === 'hot').length,
-    warm: queue.filter(p => p.signal.priority === 'warm').length,
+    total: rows.length,
+    queued: rows.filter(r => r.status === 'queued').length,
+    approaching: rows.filter(r => r.status === 'approaching').length,
+    contacted: rows.filter(r => r.status === 'contacted').length,
+    converted: rows.filter(r => r.status === 'converted').length,
+    hot: rows.filter(r => r.priority === 'hot').length,
+    warm: rows.filter(r => r.priority === 'warm').length,
   };
 }
 
@@ -214,13 +314,13 @@ export async function approachProspect(params: {
     consultantName,
   });
 
-  updateProspectStatus(params.consultantId, params.prospectId, 'approaching', {
+  await updateProspectStatus(params.consultantId, params.prospectId, 'approaching', {
     contactedPhone: params.prospectPhone,
   });
 
   enqueueSend(params.prospectPhone, async () => {
     await sendText(params.prospectPhone, message);
-    updateProspectStatus(params.consultantId, params.prospectId, 'contacted');
+    await updateProspectStatus(params.consultantId, params.prospectId, 'contacted');
     logger.info(`Abordagem enviada para ${params.prospectPhone.substring(0, 6)}... (prospect: @${entry.signal.profileId})`);
   });
 
@@ -234,9 +334,8 @@ export async function approachProspect(params: {
 export async function notifyConsultantAboutProspects(
   consultantId: string
 ): Promise<void> {
-  const hotProspects = getNextProspects(consultantId, 3).filter(
-    p => p.signal.priority === 'hot'
-  );
+  const allProspects = await getNextProspects(consultantId, 10);
+  const hotProspects = allProspects.filter(p => p.signal.priority === 'hot').slice(0, 3);
 
   if (hotProspects.length === 0) return;
 

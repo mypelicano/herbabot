@@ -178,6 +178,38 @@ create table if not exists daily_metrics (
 );
 
 -- ============================================================
+-- FILA DE PROSPECTS (persistência entre reinicializações)
+-- ============================================================
+create table if not exists prospect_queue (
+  id                text primary key,             -- pq_timestamp_random
+  consultant_id     uuid not null references consultants(id) on delete cascade,
+  profile_id        text not null,                -- handle na rede social
+  platform          text not null,                -- instagram | facebook | tiktok
+  profile_name      text,
+  post_url          text,
+  message_text      text not null default '',
+  product_score     int not null default 0,
+  business_score    int not null default 0,
+  urgency_score     int not null default 0,
+  matched_keywords  jsonb not null default '[]'::jsonb,
+  priority          text not null default 'warm', -- hot | warm | cold
+  status            text not null default 'queued',
+                    -- queued | approaching | contacted | converted | ignored
+  approached_at     timestamptz,
+  contacted_phone   text,
+  notes             text,
+  created_at        timestamptz default now(),
+  updated_at        timestamptz default now()
+);
+
+create index if not exists idx_prospect_queue_consultant on prospect_queue(consultant_id);
+create index if not exists idx_prospect_queue_status on prospect_queue(status);
+create index if not exists idx_prospect_queue_priority on prospect_queue(priority);
+
+create trigger trg_prospect_queue_updated_at before update on prospect_queue
+  for each row execute function update_updated_at();
+
+-- ============================================================
 -- ÍNDICES PARA PERFORMANCE
 -- ============================================================
 create index if not exists idx_leads_consultant on leads(consultant_id);

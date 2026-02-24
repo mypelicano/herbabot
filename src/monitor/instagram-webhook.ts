@@ -125,7 +125,7 @@ async function handleInstagramComment(
     return;
   }
 
-  enqueueProspect({ consultantId, signal });
+  await enqueueProspect({ consultantId, signal });
 }
 
 // ============================================================
@@ -149,7 +149,7 @@ async function handleInstagramDM(
   const consultantId = await findConsultantByInstagramPage(pageId);
   if (!consultantId) return;
 
-  enqueueProspect({ consultantId, signal });
+  await enqueueProspect({ consultantId, signal });
 }
 
 // ============================================================
@@ -221,7 +221,7 @@ export async function handleManyChatWebhook(
 
   if (!signal) return;
 
-  enqueueProspect({ consultantId, signal });
+  await enqueueProspect({ consultantId, signal });
 }
 
 // ============================================================

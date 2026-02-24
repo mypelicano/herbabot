@@ -75,11 +75,16 @@ router.get('/:consultantId/summary', async (req: Request, res: Response) => {
 // GET /api/dashboard/:consultantId/prospects
 // Lista prospects na fila com prioridade
 // ============================================================
-router.get('/:consultantId/prospects', (req: Request, res: Response) => {
-  const consultantId = p(req, 'consultantId');
-  const limit = parseInt((req.query['limit'] as string | undefined) ?? '20', 10);
-  const prospects = getNextProspects(consultantId, limit);
-  res.json({ prospects, total: prospects.length });
+router.get('/:consultantId/prospects', async (req: Request, res: Response) => {
+  try {
+    const consultantId = p(req, 'consultantId');
+    const limit = parseInt((req.query['limit'] as string | undefined) ?? '20', 10);
+    const prospects = await getNextProspects(consultantId, limit);
+    res.json({ prospects, total: prospects.length });
+  } catch (error) {
+    logger.error('Erro ao buscar prospects', error);
+    res.status(500).json({ error: 'Erro interno' });
+  }
 });
 
 // ============================================================
