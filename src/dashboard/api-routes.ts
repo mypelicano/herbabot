@@ -15,7 +15,14 @@
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '../lib/logger.js';
+
+// Cliente Supabase para verificar JWT Bearer do frontend
+const supabaseAdmin = createSupabaseClient(
+  process.env.SUPABASE_URL ?? '',
+  process.env.SUPABASE_SERVICE_KEY ?? '',
+);
 
 const ApproachProspectSchema = z.object({
   prospectId: z.string().min(1),
@@ -38,25 +45,35 @@ const logger = createLogger('DASHBOARD-API');
 const router = Router();
 
 // ============================================================
-// MIDDLEWARE DE AUTENTICAÇÃO SIMPLES
-// Em produção: validar JWT do Supabase
+// MIDDLEWARE DE AUTENTICAÇÃO DUAL
+// Aceita: X-API-Key (server-to-server) OU Bearer JWT (frontend)
 // ============================================================
-function authMiddleware(req: Request, res: Response, next: NextFunction): void {
-  const apiKey = req.headers['x-api-key'] as string | undefined;
+async function authMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
   const expectedKey = config.dashboard.apiKey;
 
-  // Se não há chave configurada, aceita tudo (modo dev)
-  if (!expectedKey) {
+  // 1. Verificar X-API-Key (modo server-to-server)
+  const apiKey = req.headers['x-api-key'] as string | undefined;
+  if (!expectedKey || (apiKey && apiKey === expectedKey)) {
     next();
     return;
   }
 
-  if (!apiKey || apiKey !== expectedKey) {
-    res.status(401).json({ error: 'Não autorizado' });
-    return;
+  // 2. Verificar Bearer JWT do Supabase (frontend)
+  const bearer = (req.headers['authorization'] as string | undefined)?.replace('Bearer ', '');
+  if (bearer && process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY) {
+    try {
+      const { data: { user } } = await supabaseAdmin.auth.getUser(bearer);
+      if (user) {
+        (req as Request & { supabaseUser?: unknown }).supabaseUser = user;
+        next();
+        return;
+      }
+    } catch {
+      // JWT inválido — continua para retornar 401
+    }
   }
 
-  next();
+  res.status(401).json({ error: 'Não autorizado' });
 }
 
 router.use(authMiddleware);

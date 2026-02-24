@@ -4,6 +4,7 @@
 
 import crypto from 'node:crypto';
 import * as Sentry from '@sentry/node';
+import cors from 'cors';
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { createLogger } from './lib/logger.js';
@@ -24,6 +25,18 @@ import { config } from './config/index.js';
 
 const logger = createLogger('SERVER');
 const app = express();
+
+// CORS — permitir requisições do frontend
+app.use(cors({
+  origin: [
+    process.env.FRONTEND_URL ?? 'http://localhost:3001',
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'https://pelicano-app.vercel.app',
+  ],
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'apikey', 'X-Instance-Phone'],
+}));
 
 app.use(express.json({ limit: '5mb' }));
 
