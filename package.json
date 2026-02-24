@@ -1,0 +1,38 @@
+{
+  "name": "pelicano",
+  "version": "3.0.0",
+  "description": "PELÍCANO™ — Agente Autônomo de Conversão e Prospecção Multicanal para Herbalife",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "node --watch --loader ts-node/esm src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test:chat": "node --loader ts-node/esm src/cli/chat-test.ts",
+    "db:migrate": "node --loader ts-node/esm src/database/migrate.ts",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.36.3",
+    "@supabase/supabase-js": "^2.49.1",
+    "@types/express": "^5.0.6",
+    "bullmq": "^5.34.8",
+    "chalk": "^5.4.1",
+    "dotenv": "^16.4.7",
+    "express": "^5.2.1",
+    "ioredis": "^5.4.2",
+    "node-cron": "^3.0.3",
+    "uuid": "^11.1.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "@types/node-cron": "^3.0.11",
+    "@types/uuid": "^10.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.2"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
