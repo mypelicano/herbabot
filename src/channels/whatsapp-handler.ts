@@ -173,9 +173,9 @@ async function handleIncomingMessage(
   // Processar com o motor de conversação
   enqueueSend(senderPhone, async () => {
     try {
-      // Simular "digitando..." por alguns segundos
+      // Simular "digitando..." (não bloqueia se falhar)
       const typingDuration = Math.min(messageText.length * 80, 4000);
-      await sendTyping(senderPhone, typingDuration);
+      await sendTyping(senderPhone, typingDuration).catch(() => {});
 
       const result = await processMessage({
         leadId,
