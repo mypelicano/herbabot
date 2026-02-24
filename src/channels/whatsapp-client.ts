@@ -125,7 +125,7 @@ export async function sendText(
       method: 'POST',
       body: {
         number: jid,
-        text,
+        textMessage: { text },
         delay: Math.floor(config.safety.minDelayMs / 1000) * 1000,
       },
     }
