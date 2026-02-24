@@ -478,7 +478,83 @@ function buildCheckinResponseMessage(params: {
 }
 
 // ============================================================
-// GERAR RELATÓRIO DO PROJETO (para o consultor ou cliente)
+// GERAR RELATÓRIO ESTRUTURADO (JSON) — para o frontend web
+// ============================================================
+export async function generateProjectReportJSON(projectId: string) {
+  const { data: project } = await db.client
+    .from('client_projects')
+    .select('*, client_gamification(*)')
+    .eq('id', projectId)
+    .single();
+
+  const proj = project as (ClientProject & { client_gamification: ClientGamification[] }) | null;
+  if (!proj) return null;
+
+  const gam = proj.client_gamification?.[0];
+  const daysActive = Math.floor(
+    (Date.now() - new Date(proj.start_date ?? proj.created_at).getTime()) / (24 * 60 * 60 * 1000)
+  );
+
+  // Buscar lead name
+  const { data: lead } = await db.client
+    .from('leads')
+    .select('full_name')
+    .eq('id', proj.lead_id)
+    .single();
+
+  // Buscar weight history (últimos 90 registros)
+  const { data: checkins } = await db.client
+    .from('daily_checkins')
+    .select('checkin_date, weight_kg, xp_gained')
+    .eq('project_id', projectId)
+    .order('checkin_date', { ascending: true })
+    .limit(90);
+
+  const weightHistory = (checkins ?? [])
+    .filter((c: { weight_kg: number | null }) => c.weight_kg)
+    .map((c: { checkin_date: string; weight_kg: number }) => ({ date: c.checkin_date, weight: c.weight_kg }));
+
+  // Buscar check-ins recentes
+  const { data: recentCheckins } = await db.client
+    .from('daily_checkins')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('checkin_date', { ascending: false })
+    .limit(10);
+
+  // Montar badges com status locked/unlocked
+  const earnedIds = new Set(gam?.badges ?? []);
+  const badges = BADGES.map(b => ({
+    id: b.id,
+    emoji: b.emoji,
+    name: b.name,
+    locked: !earnedIds.has(b.id),
+    unlockedAt: earnedIds.has(b.id) ? (gam?.updated_at ?? null) : undefined,
+    requirement: !earnedIds.has(b.id) ? b.description : undefined,
+  }));
+
+  return {
+    leadName: (lead as { full_name: string } | null)?.full_name ?? 'Cliente',
+    productKit: proj.product_kit,
+    goalDescription: proj.goal_description,
+    daysActive,
+    xpTotal: gam?.xp_total ?? 0,
+    level: gam?.level ?? 1,
+    levelName: LEVEL_NAMES[gam?.level ?? 1] ?? 'Iniciante',
+    currentStreak: gam?.current_streak ?? 0,
+    maxStreak: gam?.max_streak ?? 0,
+    checkinCount: gam?.checkin_count_total ?? 0,
+    startWeight: proj.start_weight_kg,
+    currentWeight: proj.current_weight_kg,
+    targetWeight: proj.target_weight_kg,
+    weightHistory,
+    recentCheckins: recentCheckins ?? [],
+    badges,
+  };
+}
+
+// ============================================================
+// GERAR RELATÓRIO DO PROJETO (texto WhatsApp — para o consultor)
 // ============================================================
 export async function generateProjectReport(projectId: string): Promise<string> {
   const { data: project } = await db.client

@@ -16,7 +16,7 @@ import type { Request, Response } from 'express';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { createLogger } from '../lib/logger.js';
-import { processCheckin, generateProjectReport } from '../engine/gamification.js';
+import { processCheckin, generateProjectReportJSON } from '../engine/gamification.js';
 
 const logger = createLogger('CLIENT-API');
 const router = Router();
@@ -75,7 +75,11 @@ router.get('/me', async (req: Request, res: Response) => {
     const projectId = await withProjectId(req, res);
     if (!projectId) return;
 
-    const report = await generateProjectReport(projectId);
+    const report = await generateProjectReportJSON(projectId);
+    if (!report) {
+      res.status(404).json({ error: 'Projeto não encontrado' });
+      return;
+    }
     res.json({ projectId, report });
   } catch (error) {
     logger.error('Erro ao buscar dados do cliente', error);

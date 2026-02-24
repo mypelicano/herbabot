@@ -39,7 +39,7 @@ import {
   getNextProspects,
   approachProspect,
 } from '../monitor/prospect-queue.js';
-import { generateProjectReport } from '../engine/gamification.js';
+import { generateProjectReportJSON } from '../engine/gamification.js';
 
 const logger = createLogger('DASHBOARD-API');
 const router = Router();
@@ -163,7 +163,11 @@ router.get('/:consultantId/metrics', async (req: Request, res: Response) => {
 router.get('/project/:projectId/report', async (req: Request, res: Response) => {
   try {
     const projectId = p(req, 'projectId');
-    const report = await generateProjectReport(projectId);
+    const report = await generateProjectReportJSON(projectId);
+    if (!report) {
+      res.status(404).json({ error: 'Projeto não encontrado' });
+      return;
+    }
     res.json({ projectId, report });
   } catch (error) {
     logger.error('Erro ao gerar relatório do projeto', error);
