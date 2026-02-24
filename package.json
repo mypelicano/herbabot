@@ -14,11 +14,13 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.36.3",
+    "@sentry/node": "^10.39.0",
     "@supabase/supabase-js": "^2.49.1",
     "@types/express": "^5.0.6",
     "chalk": "^5.4.1",
     "dotenv": "^16.4.7",
     "express": "^5.2.1",
+    "ioredis": "^5.9.3",
     "node-cron": "^3.0.3",
     "uuid": "^11.1.0",
     "zod": "^3.24.2"

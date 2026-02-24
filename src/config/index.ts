@@ -10,6 +10,8 @@ const envSchema = z.object({
   ELEVENLABS_VOICE_ID: z.string().optional(),
   INSTAGRAM_VERIFY_TOKEN: z.string().default('pelicano_verify_token'),
   DASHBOARD_API_KEY: z.string().optional(),
+  REDIS_URL: z.string().optional(),
+  SENTRY_DSN: z.string().optional(),
   AUDIO_TRIGGER_DELAY_MS: z.coerce.number().default(120000),
   TIMEZONE_OFFSET: z.coerce.number().default(-3),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),

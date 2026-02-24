@@ -10,7 +10,7 @@ import {
 } from './spin-prompts.js';
 import {
   createMemory,
-  getMemory,
+  getMemoryAsync,
   addMessage,
   updateContext,
   advanceStage,
@@ -54,11 +54,11 @@ async function getOrCreateConversation(params: {
   const existingConversation = await db.conversations.findActive(params.leadId);
 
   if (existingConversation) {
-    // Verificar se já está em cache
-    const cached = getMemory(existingConversation.id);
+    // Verificar L1 (memória local) e L2 (Redis) antes de reconstruir do Supabase
+    const cached = await getMemoryAsync(existingConversation.id);
     if (cached) return cached;
 
-    // Restaurar do banco
+    // Fallback L3: restaurar dos dados do Supabase já carregados
     return restoreMemory({
       leadId: params.leadId,
       consultantId: params.consultantId,

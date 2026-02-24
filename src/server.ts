@@ -2,7 +2,10 @@
  * Servidor HTTP — Webhook da Evolution API + Instagram + roteador de canais
  */
 
+import crypto from 'node:crypto';
+import * as Sentry from '@sentry/node';
 import express from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { createLogger } from './lib/logger.js';
 import {
   handleWebhookEvent,
@@ -41,7 +44,26 @@ app.get('/health', (_req, res) => {
 // Cada instância pode enviar para o mesmo endpoint,
 // diferenciando pelo header X-Instance-Phone
 // ============================================================
+
+// Validação HMAC: verifica apikey enviada pela Evolution API no header
+function validateEvolutionHmac(req: express.Request): boolean {
+  const expectedKey = process.env.EVOLUTION_API_KEY ?? '';
+  if (!expectedKey) return true; // sem chave configurada, aceita (modo dev)
+
+  const sentKey = (req.headers['apikey'] as string | undefined) ?? '';
+  // Comparação em tempo constante para evitar timing attacks
+  if (sentKey.length !== expectedKey.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(sentKey), Buffer.from(expectedKey));
+}
+
 app.post('/webhook/whatsapp', async (req, res) => {
+  // Validar autenticidade da requisição antes de qualquer processamento
+  if (!validateEvolutionHmac(req)) {
+    logger.warn('Webhook WhatsApp rejeitado: apikey inválida');
+    res.sendStatus(401);
+    return;
+  }
+
   // Responder imediatamente para não timeout na Evolution API
   res.sendStatus(200);
 
@@ -113,6 +135,17 @@ app.post('/webhook/manychat', async (req, res) => {
   } catch (error) {
     logger.error('Erro ao processar webhook ManyChat', error);
   }
+});
+
+// ============================================================
+// ERROR HANDLER GLOBAL — captura erros Express e envia ao Sentry
+// Deve ser o ÚLTIMO middleware registrado
+// ============================================================
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  logger.error('Erro Express não tratado', err);
+  if (process.env.SENTRY_DSN) Sentry.captureException(err);
+  res.status(500).json({ error: 'Erro interno do servidor' });
 });
 
 // ============================================================

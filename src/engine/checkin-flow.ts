@@ -10,6 +10,7 @@ import { db } from '../database/client.js';
 import { sendText } from '../channels/whatsapp-client.js';
 import { enqueueSend } from '../safety/rate-limiter.js';
 import { processCheckin, type CheckinData } from './gamification.js';
+import { redisSet, redisGet, redisDel, REDIS_KEYS } from '../lib/redis.js';
 
 const logger = createLogger('CHECKIN');
 
@@ -25,6 +26,19 @@ type CheckinSession = {
 };
 
 const activeSessions = new Map<string, CheckinSession>(); // key: leadPhone
+
+// TTL de 2h para sessões de check-in (mesma janela de expiração)
+const CHECKIN_SESSION_TTL_SEC = 2 * 60 * 60;
+
+// Helpers de persistência Redis para sessões de check-in
+function _saveCheckinSession(session: CheckinSession): void {
+  redisSet(REDIS_KEYS.checkinSession(session.leadPhone), session, CHECKIN_SESSION_TTL_SEC)
+    .catch(() => { /* erros logados internamente */ });
+}
+
+function _deleteCheckinSession(phone: string): void {
+  redisDel(REDIS_KEYS.checkinSession(phone)).catch(() => { /* erros logados internamente */ });
+}
 
 // ============================================================
 // ENVIAR CHECK-IN DIÁRIO PROATIVO
@@ -50,14 +64,16 @@ export async function sendDailyCheckin(params: {
     `Responda: *SIM* ou *NÃO*`,
   ].join('\n');
 
-  // Iniciar sessão de check-in
-  activeSessions.set(params.leadPhone, {
+  // Iniciar sessão de check-in (L1 + Redis)
+  const session: CheckinSession = {
     projectId: params.projectId,
     leadPhone: params.leadPhone,
     step: 'waiting_shake_am',
     data: {},
     startedAt: new Date(),
-  });
+  };
+  activeSessions.set(params.leadPhone, session);
+  _saveCheckinSession(session);
 
   enqueueSend(params.leadPhone, async () => {
     await sendText(params.leadPhone, message);
@@ -74,12 +90,22 @@ export async function handleCheckinResponse(
   phone: string,
   message: string
 ): Promise<{ handled: boolean; reply?: string }> {
-  const session = activeSessions.get(phone);
+  // L1: cache local; L2: Redis (recupera sessão após restart)
+  let session = activeSessions.get(phone);
+  if (!session) {
+    const raw = await redisGet<CheckinSession>(REDIS_KEYS.checkinSession(phone));
+    if (raw && raw.projectId) {
+      raw.startedAt = new Date(raw.startedAt); // desserializar Date
+      activeSessions.set(phone, raw);
+      session = raw;
+    }
+  }
   if (!session) return { handled: false };
 
   // Sessão expirada (mais de 2 horas)
-  if (Date.now() - session.startedAt.getTime() > 2 * 60 * 60 * 1000) {
+  if (Date.now() - new Date(session.startedAt).getTime() > 2 * 60 * 60 * 1000) {
     activeSessions.delete(phone);
+    _deleteCheckinSession(phone);
     return { handled: false };
   }
 
@@ -98,6 +124,7 @@ export async function handleCheckinResponse(
     case 'waiting_shake_am': {
       session.data.shakeAm = isYes;
       session.step = 'waiting_shake_pm';
+      _saveCheckinSession(session);
       return {
         handled: true,
         reply: `${isYes ? '✅ Ótimo!' : '❌ Tudo bem, amanhã!'}\n\n*Tomou o shake da NOITE/TARDE?*\nResponda: *SIM* ou *NÃO*`,
@@ -107,6 +134,7 @@ export async function handleCheckinResponse(
     case 'waiting_shake_pm': {
       session.data.shakePm = isYes;
       session.step = 'waiting_hydration';
+      _saveCheckinSession(session);
       return {
         handled: true,
         reply: `${isYes ? '✅ Perfeito!' : '❌ Ok!'}\n\n*Tomou os 2 litros de água hoje?*\nResponda: *SIM* ou *NÃO*`,
@@ -116,6 +144,7 @@ export async function handleCheckinResponse(
     case 'waiting_hydration': {
       session.data.hydrationOk = isYes;
       session.step = 'waiting_supplement';
+      _saveCheckinSession(session);
       return {
         handled: true,
         reply: `${isYes ? '✅ Hidratação em dia!' : '❌ Fica de olho na água amanhã!'}\n\n*Tomou o suplemento/vitamina hoje?*\nResponda: *SIM* ou *NÃO*`,
@@ -125,6 +154,7 @@ export async function handleCheckinResponse(
     case 'waiting_supplement': {
       session.data.supplementOk = isYes;
       session.step = 'waiting_weight';
+      _saveCheckinSession(session);
       return {
         handled: true,
         reply: `${isYes ? '✅ Arrasou!' : '❌ Não esqueça amanhã!'}\n\n*Quer registrar seu peso hoje? (opcional)*\nSe sim, manda o número (ex: *68.5*)\nSe não, responde *PULAR*`,
@@ -145,6 +175,7 @@ export async function handleCheckinResponse(
 
       session.step = 'done';
       activeSessions.delete(phone);
+      _deleteCheckinSession(phone);
 
       // Processar check-in completo
       try {
@@ -171,22 +202,35 @@ export async function handleCheckinResponse(
 
     default:
       activeSessions.delete(phone);
+      _deleteCheckinSession(phone);
       return { handled: false };
   }
 }
 
 // ============================================================
 // VERIFICAR SE LEAD TEM SESSÃO DE CHECK-IN ATIVA
+// Versão síncrona (L1 cache apenas) — para verificações rápidas
+// Versão assíncrona (com Redis) — usar no handler do WhatsApp
 // ============================================================
 export function hasActiveCheckinSession(phone: string): boolean {
   const session = activeSessions.get(phone);
   if (!session) return false;
   // Expirar automaticamente sessões antigas
-  if (Date.now() - session.startedAt.getTime() > 2 * 60 * 60 * 1000) {
+  if (Date.now() - new Date(session.startedAt).getTime() > 2 * 60 * 60 * 1000) {
     activeSessions.delete(phone);
+    _deleteCheckinSession(phone);
     return false;
   }
   return true;
+}
+
+// Versão assíncrona com fallback Redis (usar no WhatsApp handler)
+export async function hasActiveCheckinSessionAsync(phone: string): Promise<boolean> {
+  if (hasActiveCheckinSession(phone)) return true;
+  const raw = await redisGet<CheckinSession>(REDIS_KEYS.checkinSession(phone));
+  if (!raw?.projectId) return false;
+  const age = Date.now() - new Date(raw.startedAt).getTime();
+  return age < 2 * 60 * 60 * 1000;
 }
 
 // ============================================================

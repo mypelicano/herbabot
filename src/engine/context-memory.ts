@@ -1,12 +1,14 @@
 import type { ConversationMessage, LeadContextData } from '../database/client.js';
 import { createLogger } from '../lib/logger.js';
+import { redisSet, redisGet, REDIS_KEYS } from '../lib/redis.js';
 
 const logger = createLogger('MEMORY');
 
 // ============================================================
 // MEMÓRIA DE CONTEXTO DO LEAD
-// Mantém o estado da conversa em memória (cache local)
-// e sincroniza com o Supabase quando necessário
+// L1 cache: Map em memória (acesso ~0ms)
+// L2 cache: Redis/Upstash (sobrevive reinicializações do server)
+// L3 persistência: Supabase (fonte de verdade)
 // ============================================================
 
 export type LeadMemory = {
@@ -22,8 +24,39 @@ export type LeadMemory = {
   lastUpdated: Date;
 };
 
-// Cache em memória (Map por conversationId)
+// L1: Cache em memória (Map por conversationId)
 const memoryCache = new Map<string, LeadMemory>();
+
+// ============================================================
+// HELPERS INTERNOS — PERSISTÊNCIA NO REDIS
+// ============================================================
+
+// Salva memória no Redis em background (fire-and-forget)
+function _persistToRedis(memory: LeadMemory): void {
+  redisSet(REDIS_KEYS.conversation(memory.conversationId), memory).catch(() => {
+    // Erros já logados dentro do redisSet
+  });
+}
+
+// Deserializa memória do JSON armazenado no Redis
+function _deserializeMemory(raw: unknown): LeadMemory | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const m = raw as Record<string, unknown>;
+  if (!m['conversationId'] || !m['leadId']) return null;
+
+  return {
+    leadId: m['leadId'] as string,
+    consultantId: m['consultantId'] as string,
+    conversationId: m['conversationId'] as string,
+    spinStage: (m['spinStage'] as string) ?? 'ice_break',
+    messages: (m['messages'] as ConversationMessage[]) ?? [],
+    context: (m['context'] as LeadContextData) ?? {},
+    signals: (m['signals'] as string[]) ?? [],
+    handoffScore: (m['handoffScore'] as number) ?? 0,
+    messageCount: (m['messageCount'] as number) ?? 0,
+    lastUpdated: new Date((m['lastUpdated'] as string) ?? Date.now()),
+  };
+}
 
 // ============================================================
 // CRIAR MEMÓRIA INICIAL
@@ -48,15 +81,37 @@ export function createMemory(params: {
   };
 
   memoryCache.set(params.conversationId, memory);
+  _persistToRedis(memory);
   logger.debug(`Memória criada para conversa ${params.conversationId}`);
   return memory;
 }
 
 // ============================================================
-// RECUPERAR MEMÓRIA
+// RECUPERAR MEMÓRIA (L1 — síncrono, apenas cache local)
 // ============================================================
 export function getMemory(conversationId: string): LeadMemory | null {
   return memoryCache.get(conversationId) ?? null;
+}
+
+// ============================================================
+// RECUPERAR MEMÓRIA COM FALLBACK REDIS (L2 — assíncrono)
+// Chamado quando o cache local está vazio (ex: após restart)
+// ============================================================
+export async function getMemoryAsync(conversationId: string): Promise<LeadMemory | null> {
+  // L1: cache local
+  const cached = memoryCache.get(conversationId);
+  if (cached) return cached;
+
+  // L2: Redis
+  const raw = await redisGet<unknown>(REDIS_KEYS.conversation(conversationId));
+  const restored = _deserializeMemory(raw);
+  if (restored) {
+    memoryCache.set(conversationId, restored);
+    logger.debug(`Memória restaurada do Redis para ${conversationId}`);
+    return restored;
+  }
+
+  return null;
 }
 
 // ============================================================
@@ -80,6 +135,7 @@ export function addMessage(
   });
   memory.messageCount++;
   memory.lastUpdated = new Date();
+  _persistToRedis(memory);
 }
 
 // ============================================================
@@ -94,7 +150,7 @@ export function updateContext(
 
   memory.context = { ...memory.context, ...updates };
   memory.lastUpdated = new Date();
-
+  _persistToRedis(memory);
   logger.debug(`Contexto atualizado para ${conversationId}`, updates);
 }
 
@@ -133,7 +189,7 @@ export function advanceStage(conversationId: string): string {
 
   memory.spinStage = nextStage;
   memory.lastUpdated = new Date();
-
+  _persistToRedis(memory);
   logger.info(`Etapa avançada: ${flow[currentIndex]} → ${nextStage}`);
   return nextStage;
 }
@@ -147,6 +203,7 @@ export function addSignal(conversationId: string, signal: string): void {
 
   if (!memory.signals.includes(signal)) {
     memory.signals.push(signal);
+    _persistToRedis(memory);
   }
 }
 
@@ -158,6 +215,7 @@ export function updateHandoffScore(conversationId: string, score: number): void 
   if (!memory) return;
 
   memory.handoffScore = score;
+  _persistToRedis(memory);
 }
 
 // ============================================================
@@ -179,7 +237,7 @@ export function serializeMemory(conversationId: string): {
 }
 
 // ============================================================
-// RESTAURAR MEMÓRIA DO BANCO
+// RESTAURAR MEMÓRIA DO BANCO (Supabase → L1 cache)
 // ============================================================
 export function restoreMemory(params: {
   leadId: string;
@@ -203,6 +261,7 @@ export function restoreMemory(params: {
   };
 
   memoryCache.set(params.conversationId, memory);
+  _persistToRedis(memory);
   logger.debug(`Memória restaurada para ${params.conversationId} (${params.messages.length} mensagens)`);
   return memory;
 }
