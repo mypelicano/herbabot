@@ -116,10 +116,9 @@ async function handleIncomingMessage(
 
   logger.info(`Mensagem recebida de ${senderPhone.substring(0, 6)}...: "${messageText.substring(0, 50)}..."`);
 
-  // Verificar horário permitido
+  // Verificar horário permitido (8h–21h fuso de São Paulo)
   if (!isWithinAllowedHours()) {
-    logger.debug('Fora do horário permitido — mensagem enfileirada para depois');
-    // Em produção: salvar para enviar quando voltar ao horário
+    logger.warn(`Fora do horário permitido — ignorando mensagem de ${senderPhone.substring(0, 6)}... (responde 8h–21h)`);
     return;
   }
 

@@ -68,11 +68,11 @@ app.post('/webhook/whatsapp', async (req, res) => {
   res.sendStatus(200);
 
   const payload = req.body as EvolutionWebhookPayload;
-  // O número do consultor (instância) vem no header ou no body
+  // O número do consultor (instância) vem no header ou na variável de ambiente
+  // payload.instance contém o NOME da instância ("MYPELICANO"), não o telefone
   const instancePhone =
-    (req.headers['x-instance-phone'] as string) ??
-    payload.instance ??
-    process.env.EVOLUTION_INSTANCE_PHONE ??
+    (req.headers['x-instance-phone'] as string | undefined) ||
+    process.env.EVOLUTION_INSTANCE_PHONE ||
     '';
 
   if (!instancePhone) {
