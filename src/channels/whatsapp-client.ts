@@ -36,6 +36,7 @@ async function apiRequest<T>(path: string, options: FetchOptions): Promise<T> {
       'apikey': EVOLUTION_API_KEY,
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
+    signal: AbortSignal.timeout(15000), // 15s timeout — nunca travar
   });
 
   if (!res.ok) {

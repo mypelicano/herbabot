@@ -4,6 +4,7 @@ import { z } from 'zod';
 // Schema de validação das variáveis de ambiente
 const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().default(''),
+  ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-6'),
   SUPABASE_URL: z.string().default('http://localhost:54321'),
   SUPABASE_SERVICE_KEY: z.string().default(''),
   ELEVENLABS_API_KEY: z.string().optional(),
@@ -38,7 +39,7 @@ export const isConfigured = {
 export const config = {
   anthropic: {
     apiKey: env.ANTHROPIC_API_KEY,
-    model: 'claude-opus-4-6' as const,
+    model: env.ANTHROPIC_MODEL,
     maxTokens: 1024,
   },
   supabase: {

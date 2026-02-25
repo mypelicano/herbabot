@@ -69,6 +69,16 @@ export function enqueueSend(phone: string, fn: () => Promise<void>): void {
   if (!isProcessing) processQueue();
 }
 
+// Timeout wrapper — garante que a fila NUNCA trava
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout: operação excedeu ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
 async function processQueue(): Promise<void> {
   if (sendQueue.length === 0) {
     isProcessing = false;
@@ -85,7 +95,8 @@ async function processQueue(): Promise<void> {
   }
 
   try {
-    await item.execute();
+    // Timeout de 60s — Claude Opus pode demorar, mas nunca travar a fila
+    await withTimeout(item.execute(), 60000);
   } catch (error) {
     logger.error('Erro ao processar item da fila', error);
   }
